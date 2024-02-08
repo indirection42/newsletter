@@ -5,4 +5,24 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+path = "src/main.rs"
+name = "zero2prod"
+
 [dependencies]
+actix-web = "4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+] }
+config = "0.14"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[dev-dependencies]
+reqwest = "0.11"
