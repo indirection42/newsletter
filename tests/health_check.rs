@@ -1,8 +1,21 @@
+use once_cell::sync::Lazy;
+use secrecy::ExposeSecret;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
+use std::io;
 use std::net::TcpListener;
 use zero2prod::config::get_config;
 use zero2prod::startup::run;
+use zero2prod::telemetry::{get_subsciber, init_subscriber};
 
+static TRACING: Lazy<()> = Lazy::new(|| {
+    if std::env::var("TEST_LOG").is_ok() {
+        let subscriber = get_subsciber("test".into(), "debug".into(), io::stdout);
+        init_subscriber(subscriber);
+    } else {
+        let subscriber = get_subsciber("test".into(), "debug".into(), io::sink);
+        init_subscriber(subscriber);
+    };
+});
 #[tokio::test]
 async fn health_check_works() {
     // Launch our application as a background task
@@ -81,6 +94,7 @@ struct TestApp {
     pub db_pool: PgPool,
 }
 async fn spawn_app() -> TestApp {
+    Lazy::force(&TRACING);
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
@@ -98,13 +112,13 @@ async fn configure_database() -> PgPool {
     let connection_string = config.database.connection_string_without_db();
     // Generate a randomized database name to ensure that our tests don't conflict between runs
     config.database.database_name = uuid::Uuid::new_v4().to_string();
-    let mut conn = PgConnection::connect(&connection_string)
+    let mut conn = PgConnection::connect(connection_string.expose_secret())
         .await
         .expect("Failed to connect to Postgres.");
     conn.execute(format!(r#"CREATE DATABASE "{}";"#, &config.database.database_name).as_str())
         .await
         .expect("Failed to create database.");
-    let conn_pool = PgPool::connect(&connection_string)
+    let conn_pool = PgPool::connect(connection_string.expose_secret())
         .await
         .expect("Failed to connect to Postgres.");
     sqlx::migrate!("./migrations")
