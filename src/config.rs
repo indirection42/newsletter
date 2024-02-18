@@ -3,7 +3,13 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct Settings {
     pub database: DatabaseSettings,
-    pub application_port: u16,
+    pub application: ApplicationSettings,
+}
+
+#[derive(Deserialize)]
+pub struct ApplicationSettings {
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Deserialize)]
@@ -16,7 +22,17 @@ pub struct DatabaseSettings {
 }
 
 pub fn get_config() -> Result<Settings, config::ConfigError> {
-    let settings = config::Config::builder().add_source(config::File::with_name("config"));
+    let base_path = std::env::current_dir().expect("Failed to determine the current directory.");
+    let config_dir = base_path.join("config");
+    let env = std::env::var("APP_ENV").unwrap_or_else(|_| "local".into());
+    let env = match env.to_lowercase().as_str() {
+        "local" | "dev" | "development" => "local",
+        "prod" | "production" => "production",
+        other => panic!("Unknown environment: {:?}", other),
+    };
+    let settings = config::Config::builder()
+        .add_source(config::File::from(config_dir.join("base")).required(true))
+        .add_source(config::File::from(config_dir.join(env)).required(true));
     settings.build()?.try_deserialize()
 }
 
