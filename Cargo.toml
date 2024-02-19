@@ -12,7 +12,7 @@ name = "zero2prod"
 [dependencies]
 tracing = { version = "0.1", features = ["log"] }
 tracing-log = "0.2"
-tracing-subscriber = { verison = "0.3", features = ["registry", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 tracing-actix-web = "0.7"
 tracing-bunyan-formatter = "0.3"
 actix-web = "4"
