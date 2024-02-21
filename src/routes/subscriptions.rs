@@ -1,3 +1,4 @@
+use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
 use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
 use serde::Deserialize;
@@ -9,6 +10,15 @@ pub struct FormData {
     email: String,
     name: String,
 }
+
+impl TryFrom<FormData> for NewSubscriber {
+    type Error = String;
+    fn try_from(form: FormData) -> Result<Self, Self::Error> {
+        let name = form.name.parse::<SubscriberName>()?;
+        let email = form.email.parse::<SubscriberEmail>()?;
+        Ok(NewSubscriber { email, name })
+    }
+}
 #[tracing::instrument(
     name = "Adding a new subscriber.",
     skip(form, conn),
@@ -18,28 +28,31 @@ pub struct FormData {
     )
 )]
 pub async fn subscribe(form: web::Form<FormData>, conn: web::Data<PgPool>) -> impl Responder {
-    match insert_subscriber(&form, &conn).await {
+    let new_subscriber = match form.0.try_into() {
+        Ok(new_subscriber) => new_subscriber,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    match insert_subscriber(&new_subscriber, &conn).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 #[tracing::instrument(
     name = "Saving new subscriber details in the database.",
-    skip(form, conn),
-    fields(
-        subscriber_email = %form.email,
-        subscriber_name = %form.name
-    )
+    skip(new_subscriber, conn)
 )]
-pub async fn insert_subscriber(form: &FormData, conn: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn insert_subscriber(
+    new_subscriber: &NewSubscriber,
+    conn: &PgPool,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
         INSERT INTO subscriptions (id, email, name, subscribed_at)
         VALUES ($1, $2, $3, $4)
         "#,
         Uuid::new_v4(),
-        form.email,
-        form.name,
+        new_subscriber.email.as_ref(),
+        new_subscriber.name.as_ref(),
         Utc::now()
     )
     .execute(conn)

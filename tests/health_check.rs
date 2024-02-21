@@ -69,6 +69,11 @@ async fn subscribe_returns_a_400_for_invalid_form_data() {
         ("name=Hello%20Kitty", "missing the email"),
         ("email=hello_kitty%40gmail.com", "missing the name"),
         ("", "missing both name and email"),
+        (
+            "name=DROP TABLE subscriptions;&email=hello_kitty%40gmail.com",
+            "name contains SQL",
+        ),
+        ("name=Hello%20Kitty&email=notanemail", "invalid email"),
     ];
 
     for (invalid_body, error_message) in test_cases {
