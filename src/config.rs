@@ -45,7 +45,11 @@ pub fn get_config() -> Result<Settings, config::ConfigError> {
     let settings = config::Config::builder()
         .add_source(config::File::from(config_dir.join("base")).required(true))
         .add_source(config::File::from(config_dir.join(env)).required(true))
-        .add_source(config::Environment::with_prefix("app").separator("__"));
+        .add_source(
+            config::Environment::with_prefix("app")
+                .prefix_separator("_")
+                .separator("__"),
+        );
     settings.build()?.try_deserialize()
 }
 
