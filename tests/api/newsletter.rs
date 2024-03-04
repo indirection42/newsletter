@@ -7,6 +7,31 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 #[tokio::test]
+async fn requests_missing_authorization_are_rejected() {
+    let app = spawn_app().await;
+
+    let newsletter_request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "content": {
+            "text" : "Newsletter body as plain text",
+            "html" : "<p>Newsletter body as HTML</p>"
+        }
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/newsletters", &app.address))
+        .json(&newsletter_request_body)
+        .send()
+        .await
+        .expect("Failed to execute request.");
+
+    assert_eq!(response.status().as_u16(), 401);
+    assert_eq!(
+        r#"Basic realm="publish""#,
+        response.headers()["WWW-Authenticate"]
+    );
+}
+#[tokio::test]
 async fn newsletter_returns_400_for_invalid_data() {
     let app = spawn_app().await;
 
