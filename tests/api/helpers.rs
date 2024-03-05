@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use sha3::Digest;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::io;
 use uuid::Uuid;
@@ -21,6 +22,7 @@ pub struct TestApp {
     pub port: u16,
     pub db_pool: PgPool,
     pub email_server: MockServer,
+    pub test_user: TestUser,
 }
 
 pub struct ConfirmationLinks {
@@ -41,7 +43,8 @@ impl TestApp {
     }
 
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
-        let (username, password) = self.test_user().await;
+        let username = &self.test_user.username;
+        let password = &self.test_user.password;
         let client = reqwest::Client::new();
         client
             .post(format!("{}/newsletters", &self.address))
@@ -50,14 +53,6 @@ impl TestApp {
             .send()
             .await
             .expect("Failed to execute request.")
-    }
-
-    pub async fn test_user(&self) -> (String, String) {
-        let row = sqlx::query!("SELECT username, password FROM users LIMIT 1")
-            .fetch_one(&self.db_pool)
-            .await
-            .expect("Failed to fetch test user");
-        (row.username, row.password)
     }
 
     pub fn get_confirmation_links(&self, email_request: &wiremock::Request) -> ConfirmationLinks {
@@ -89,7 +84,7 @@ pub async fn spawn_app() -> TestApp {
 
     let config = {
         let mut c = get_config().expect("Failed to read configuration.");
-        c.database.database_name = uuid::Uuid::new_v4().to_string();
+        c.database.database_name = Uuid::new_v4().to_string();
         c.application.port = 0;
         c.email_client.base_url = email_server.uri();
         c
@@ -102,15 +97,20 @@ pub async fn spawn_app() -> TestApp {
         .expect("Failed to build application");
     let address = format!("http://127.0.0.1:{}", application.port());
     let port = application.port();
+
+    let db_pool = get_conn_pool(&config.database);
+
+    let test_user = TestUser::generate();
+    test_user.store(&db_pool).await;
+
     tokio::spawn(application.run_until_stopped());
-    let test_app = TestApp {
+    TestApp {
         address,
         port,
-        db_pool: get_conn_pool(&config.database),
+        db_pool,
         email_server,
-    };
-    add_test_user(&test_app.db_pool).await;
-    test_app
+        test_user,
+    }
 }
 
 async fn configure_database(config: &DatabaseSettings) -> PgPool {
@@ -131,17 +131,32 @@ async fn configure_database(config: &DatabaseSettings) -> PgPool {
     conn_pool
 }
 
-async fn add_test_user(pool: &PgPool) {
-    sqlx::query!(
-        r#"
-        INSERT INTO users (user_id, username, password)
-        VALUES ($1, $2, $3)
-        "#,
-        Uuid::new_v4(),
-        Uuid::new_v4().to_string(),
-        Uuid::new_v4().to_string(),
-    )
-    .execute(pool)
-    .await
-    .expect("Failed to create test users");
+pub struct TestUser {
+    pub user_id: Uuid,
+    pub username: String,
+    pub password: String,
+}
+
+impl TestUser {
+    pub fn generate() -> Self {
+        TestUser {
+            user_id: Uuid::new_v4(),
+            username: Uuid::new_v4().to_string(),
+            password: Uuid::new_v4().to_string(),
+        }
+    }
+
+    async fn store(&self, pool: &PgPool) {
+        let password_hash = sha3::Sha3_256::digest(self.password.as_bytes());
+        let password_hash = format!("{:x}", password_hash);
+        sqlx::query!(
+            r#"INSERT INTO users (user_id, username, password_hash) VALUES ($1, $2, $3)"#,
+            self.user_id,
+            self.username,
+            password_hash,
+        )
+        .execute(pool)
+        .await
+        .expect("Failed to store test user.");
+    }
 }
