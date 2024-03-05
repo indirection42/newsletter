@@ -126,10 +126,20 @@ async fn validate_credentials(
     credentials: Credentials,
     pool: &PgPool,
 ) -> Result<uuid::Uuid, PublishError> {
-    let (user_id, expected_password_hash) = get_stored_credentials(&credentials.username, pool)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Unknown username."))
-        .map_err(PublishError::AuthError)?;
+    let (user_id, expected_password_hash) =
+        match get_stored_credentials(&credentials.username, pool).await? {
+            Some((user_id, expected_password_hash)) => (Some(user_id), expected_password_hash),
+            None => (
+                None,
+                // Dummy password hash to make the function time-constant
+                Secret::new(
+                    "argon2id$v=19$m=15000,t=2,p=1$\
+        gZiV/M1gPc22ElAH/Jh1Hw$\
+        CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno"
+                        .to_string(),
+                ),
+            ),
+        };
 
     tokio::task::spawn_blocking(move || {
         verify_password_hash(expected_password_hash, credentials.password)
@@ -138,7 +148,10 @@ async fn validate_credentials(
     .context("Failed to spawn blocking task.")?
     .context("Invalid password.")
     .map_err(PublishError::AuthError)?;
-    Ok(user_id)
+
+    user_id
+        .ok_or_else(|| anyhow::anyhow!("Unknown username."))
+        .map_err(PublishError::AuthError)
 }
 
 #[tracing::instrument(name = "Fetching stored credentials.", skip(username, pool))]
