@@ -11,8 +11,8 @@ name = "zero2prod"
 
 [dependencies]
 anyhow = "1"
+argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
-sha3 = "0.10"
 thiserror = "1"
 tracing = { version = "0.1", features = ["log"] }
 tracing-log = "0.2"

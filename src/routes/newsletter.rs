@@ -7,11 +7,11 @@ use actix_web::{
     web, HttpRequest, HttpResponse, ResponseError,
 };
 use anyhow::Context;
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::prelude::*;
 use reqwest::header;
 use secrecy::{ExposeSecret, Secret};
 use serde::Deserialize;
-use sha3::Digest;
 use sqlx::PgPool;
 use tracing::warn;
 
@@ -121,30 +121,66 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
     })
 }
 
-#[tracing::instrument(name = "Validating credentials.", skip(pool))]
+#[tracing::instrument(name = "Validating credentials.", skip(credentials, pool))]
 async fn validate_credentials(
     credentials: Credentials,
     pool: &PgPool,
 ) -> Result<uuid::Uuid, PublishError> {
-    let password_hash = sha3::Sha3_256::digest(credentials.password.expose_secret().as_bytes());
-    let password_hash = format!("{:x}", password_hash);
-    sqlx::query!(
-        r#"SELECT user_id FROM users WHERE username = $1 AND password_hash = $2"#,
-        credentials.username,
-        password_hash,
+    let (user_id, expected_password_hash) = get_stored_credentials(&credentials.username, pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Unknown username."))
+        .map_err(PublishError::AuthError)?;
+
+    tokio::task::spawn_blocking(move || {
+        verify_password_hash(expected_password_hash, credentials.password)
+    })
+    .await
+    .context("Failed to spawn blocking task.")?
+    .context("Invalid password.")
+    .map_err(PublishError::AuthError)?;
+    Ok(user_id)
+}
+
+#[tracing::instrument(name = "Fetching stored credentials.", skip(username, pool))]
+async fn get_stored_credentials(
+    username: &str,
+    pool: &PgPool,
+) -> Result<Option<(uuid::Uuid, Secret<String>)>, anyhow::Error> {
+    let record = sqlx::query!(
+        "SELECT user_id, password_hash FROM users WHERE username = $1",
+        username
     )
     .fetch_optional(pool)
     .await
-    .context("Failed to perform a query to validate auth credentials.")
-    .map_err(PublishError::UnexpectedError)?
-    .map(|row| row.user_id)
-    .ok_or_else(|| anyhow::anyhow!("Invalid username or password."))
-    .map_err(PublishError::AuthError)
+    .context("Failed to perform a query to validate auth credentials.")?
+    .map(|record| (record.user_id, Secret::new(record.password_hash)));
+
+    Ok(record)
+}
+
+#[tracing::instrument(
+    name = "Verifying password hash.",
+    skip(expected_password_hash, password_candidate)
+)]
+fn verify_password_hash(
+    expected_password_hash: Secret<String>,
+    password_candidate: Secret<String>,
+) -> Result<(), PublishError> {
+    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
+        .context("Failed to parse hash in PHC String format.")?;
+    Argon2::default()
+        .verify_password(
+            password_candidate.expose_secret().as_bytes(),
+            &expected_password_hash,
+        )
+        .context("Invalid password.")
+        .map_err(PublishError::AuthError)
 }
 
 struct ConfirmedSubscriber {
     email: SubscriberEmail,
 }
+
 #[tracing::instrument(name = "Fetching confirmed subscribers.", skip(pool))]
 async fn get_confirmed_subscribers(pool: &PgPool) -> Result<Vec<ConfirmedSubscriber>, sqlx::Error> {
     let confirmed_subscribers =

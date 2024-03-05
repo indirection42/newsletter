@@ -1,5 +1,8 @@
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2,
+};
 use once_cell::sync::Lazy;
-use sha3::Digest;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::io;
 use uuid::Uuid;
@@ -147,8 +150,12 @@ impl TestUser {
     }
 
     async fn store(&self, pool: &PgPool) {
-        let password_hash = sha3::Sha3_256::digest(self.password.as_bytes());
-        let password_hash = format!("{:x}", password_hash);
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(self.password.as_bytes(), &salt)
+            .expect("Failed to hash password.")
+            .to_string();
         sqlx::query!(
             r#"INSERT INTO users (user_id, username, password_hash) VALUES ($1, $2, $3)"#,
             self.user_id,
