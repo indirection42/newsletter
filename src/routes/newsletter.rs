@@ -1,3 +1,4 @@
+use crate::authentication::{validate_credentials, AuthError, Credentials};
 use crate::{domain::SubscriberEmail, email_client::EmailClient};
 use actix_web::{
     http::{
@@ -7,10 +8,9 @@ use actix_web::{
     web, HttpRequest, HttpResponse, ResponseError,
 };
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::prelude::*;
 use reqwest::header;
-use secrecy::{ExposeSecret, Secret};
+use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
 use tracing::warn;
@@ -53,7 +53,7 @@ impl ResponseError for PublishError {
     }
 }
 
-#[tracing::instrument(name = "Publishing a newsletter.", skip(pool, email_client, body))]
+#[tracing::instrument(name = "Publishing a newsletter.", skip(pool, email_client, body,request), fields(username = tracing::field::Empty, user_id = tracing::field::Empty))]
 pub async fn publish_newsletter(
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
@@ -62,7 +62,12 @@ pub async fn publish_newsletter(
 ) -> Result<HttpResponse, PublishError> {
     let credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?;
 
-    let _user_id = validate_credentials(credentials, &pool).await?;
+    let _user_id = validate_credentials(credentials, &pool)
+        .await
+        .map_err(|e| match e {
+            AuthError::InvalidCredentials(_) => PublishError::AuthError(e.into()),
+            AuthError::UnexpectedError(_) => PublishError::UnexpectedError(e.into()),
+        })?;
 
     let subscribers = get_confirmed_subscribers(&pool)
         .await
@@ -84,11 +89,7 @@ pub async fn publish_newsletter(
 
     Ok(HttpResponse::Ok().finish())
 }
-#[derive(Debug)]
-struct Credentials {
-    username: String,
-    password: Secret<String>,
-}
+
 fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
     let header_value = headers
         .get("Authorization")
@@ -119,75 +120,6 @@ fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Erro
         username,
         password: Secret::new(password),
     })
-}
-
-#[tracing::instrument(name = "Validating credentials.", skip(credentials, pool))]
-async fn validate_credentials(
-    credentials: Credentials,
-    pool: &PgPool,
-) -> Result<uuid::Uuid, PublishError> {
-    let (user_id, expected_password_hash) =
-        match get_stored_credentials(&credentials.username, pool).await? {
-            Some((user_id, expected_password_hash)) => (Some(user_id), expected_password_hash),
-            None => (
-                None,
-                // Dummy password hash to make the function time-constant
-                Secret::new(
-                    "argon2id$v=19$m=15000,t=2,p=1$\
-        gZiV/M1gPc22ElAH/Jh1Hw$\
-        CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno"
-                        .to_string(),
-                ),
-            ),
-        };
-
-    tokio::task::spawn_blocking(move || {
-        verify_password_hash(expected_password_hash, credentials.password)
-    })
-    .await
-    .context("Failed to spawn blocking task.")?
-    .context("Invalid password.")
-    .map_err(PublishError::AuthError)?;
-
-    user_id
-        .ok_or_else(|| anyhow::anyhow!("Unknown username."))
-        .map_err(PublishError::AuthError)
-}
-
-#[tracing::instrument(name = "Fetching stored credentials.", skip(username, pool))]
-async fn get_stored_credentials(
-    username: &str,
-    pool: &PgPool,
-) -> Result<Option<(uuid::Uuid, Secret<String>)>, anyhow::Error> {
-    let record = sqlx::query!(
-        "SELECT user_id, password_hash FROM users WHERE username = $1",
-        username
-    )
-    .fetch_optional(pool)
-    .await
-    .context("Failed to perform a query to validate auth credentials.")?
-    .map(|record| (record.user_id, Secret::new(record.password_hash)));
-
-    Ok(record)
-}
-
-#[tracing::instrument(
-    name = "Verifying password hash.",
-    skip(expected_password_hash, password_candidate)
-)]
-fn verify_password_hash(
-    expected_password_hash: Secret<String>,
-    password_candidate: Secret<String>,
-) -> Result<(), PublishError> {
-    let expected_password_hash = PasswordHash::new(expected_password_hash.expose_secret())
-        .context("Failed to parse hash in PHC String format.")?;
-    Argon2::default()
-        .verify_password(
-            password_candidate.expose_secret().as_bytes(),
-            &expected_password_hash,
-        )
-        .context("Invalid password.")
-        .map_err(PublishError::AuthError)
 }
 
 struct ConfirmedSubscriber {
