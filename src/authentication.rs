@@ -35,11 +35,24 @@ pub async fn validate_credentials(
             ),
         };
 
-    tokio::task::spawn_blocking(move || {
+    match tokio::task::spawn_blocking(move || {
         verify_password_hash(expected_password_hash, credentials.password)
     })
     .await
-    .context("Failed to spawn blocking task.")??;
+    .context("Failed to spawn blocking task.")?
+    {
+        Ok(_) => Ok(()),
+        Err(e) => match e {
+            AuthError::InvalidCredentials(_) => {
+                if user_id.is_none() {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+            _ => Err(e),
+        },
+    }?;
 
     user_id
         .ok_or_else(|| anyhow::anyhow!("Unknown username."))
