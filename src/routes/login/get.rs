@@ -1,16 +1,47 @@
 use actix_web::http::header::ContentType;
 use actix_web::{web, HttpResponse};
+use hmac::{Hmac, Mac};
+use secrecy::ExposeSecret;
 use serde::Deserialize;
+
+use crate::startup::HmacSecret;
 
 #[derive(Deserialize)]
 pub struct QueryParams {
-    error: Option<String>,
+    error: String,
+    tag: String,
 }
-pub async fn login_form(query: web::Query<QueryParams>) -> HttpResponse {
+
+impl QueryParams {
+    fn verify(self, secret: &HmacSecret) -> Result<String, anyhow::Error> {
+        let tag = hex::decode(self.tag)?;
+
+        let query_string = format!("error={}", urlencoding::Encoded::new(&self.error));
+
+        let mut mac =
+            Hmac::<sha2::Sha256>::new_from_slice(secret.0.expose_secret().as_bytes()).unwrap();
+        mac.update(query_string.as_bytes());
+        mac.verify_slice(&tag)?;
+        Ok(self.error)
+    }
+}
+pub async fn login_form(
+    query: Option<web::Query<QueryParams>>,
+    secret: web::Data<HmacSecret>,
+) -> HttpResponse {
     // TODO: use template engine
-    let error_html = match query.0.error {
+    let error_html = match query {
         None => "".into(),
-        Some(err_msg) => format!(r#"<p style="color: red;">An error occurred: {err_msg}</p>"#),
+        Some(query) => match query.0.verify(&secret) {
+            Ok(error) => format!(
+                r#"<p style="color: red;">{}</p>"#,
+                htmlescape::encode_minimal(&error)
+            ),
+            Err(e) => {
+                tracing::warn!("Failed to verify query params: {:?}", e);
+                "".into()
+            }
+        },
     };
     HttpResponse::Ok()
         .content_type(ContentType::html())

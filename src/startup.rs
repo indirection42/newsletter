@@ -5,6 +5,7 @@ use crate::routes::{
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
+use secrecy::Secret;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::io;
@@ -33,6 +34,7 @@ impl Application {
             conn_pool,
             email_client,
             config.application.base_url,
+            config.application.hmac_secret,
         )?;
         Ok(Application { server, port })
     }
@@ -53,16 +55,21 @@ pub fn get_conn_pool(config: &DatabaseSettings) -> PgPool {
 }
 
 // A wrapper type to be distinguished with raw String
+#[derive(Clone)]
 pub struct ApplicationBaseUrl(pub String);
+#[derive(Clone)]
+pub struct HmacSecret(pub Secret<String>);
 pub fn run(
     listener: TcpListener,
     conn_pool: PgPool,
     email_client: EmailClient,
     confirm_base_url: String,
+    hmac_secret: Secret<String>,
 ) -> Result<Server, std::io::Error> {
     let email_client = web::Data::new(email_client);
     let conn_pool = web::Data::new(conn_pool);
     let base_url = web::Data::new(ApplicationBaseUrl(confirm_base_url));
+    let hmac_secret = web::Data::new(HmacSecret(hmac_secret));
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
@@ -76,6 +83,7 @@ pub fn run(
             .app_data(conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())
+            .app_data(hmac_secret.clone())
     })
     .listen(listener)?
     .run();
