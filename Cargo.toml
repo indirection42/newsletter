@@ -10,6 +10,7 @@ path = "src/main.rs"
 name = "zero2prod"
 
 [dependencies]
+actix-web-flash-messages = { version = "0.4", features = ["cookies"] }
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
