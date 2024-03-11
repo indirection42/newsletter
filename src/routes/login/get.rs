@@ -1,47 +1,13 @@
 use actix_web::http::header::ContentType;
-use actix_web::{web, HttpResponse};
-use hmac::{Hmac, Mac};
-use secrecy::ExposeSecret;
-use serde::Deserialize;
+use actix_web::{HttpRequest, HttpResponse};
 
-use crate::startup::HmacSecret;
-
-#[derive(Deserialize)]
-pub struct QueryParams {
-    error: String,
-    tag: String,
-}
-
-impl QueryParams {
-    fn verify(self, secret: &HmacSecret) -> Result<String, anyhow::Error> {
-        let tag = hex::decode(self.tag)?;
-
-        let query_string = format!("error={}", urlencoding::Encoded::new(&self.error));
-
-        let mut mac =
-            Hmac::<sha2::Sha256>::new_from_slice(secret.0.expose_secret().as_bytes()).unwrap();
-        mac.update(query_string.as_bytes());
-        mac.verify_slice(&tag)?;
-        Ok(self.error)
-    }
-}
-pub async fn login_form(
-    query: Option<web::Query<QueryParams>>,
-    secret: web::Data<HmacSecret>,
-) -> HttpResponse {
+pub async fn login_form(request: HttpRequest) -> HttpResponse {
     // TODO: use template engine
-    let error_html = match query {
+    let error_html = match request.cookie("_flash") {
         None => "".into(),
-        Some(query) => match query.0.verify(&secret) {
-            Ok(error) => format!(
-                r#"<p style="color: red;">{}</p>"#,
-                htmlescape::encode_minimal(&error)
-            ),
-            Err(e) => {
-                tracing::warn!("Failed to verify query params: {:?}", e);
-                "".into()
-            }
-        },
+        Some(cookie) => {
+            format!(r#"<p style="color: red;">{}</p>"#, cookie.value())
+        }
     };
     HttpResponse::Ok()
         .content_type(ContentType::html())

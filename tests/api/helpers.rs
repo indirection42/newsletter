@@ -3,6 +3,7 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
 };
 use once_cell::sync::Lazy;
+use serde::Serialize;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::io;
 use uuid::Uuid;
@@ -26,6 +27,7 @@ pub struct TestApp {
     pub db_pool: PgPool,
     pub email_server: MockServer,
     pub test_user: TestUser,
+    pub api_client: reqwest::Client,
 }
 
 pub struct ConfirmationLinks {
@@ -34,9 +36,29 @@ pub struct ConfirmationLinks {
 }
 
 impl TestApp {
+    pub async fn post_login<Body>(&self, body: &Body) -> reqwest::Response
+    where
+        Body: Serialize,
+    {
+        self.api_client
+            .post(format!("{}/login", &self.address))
+            .form(body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+    pub async fn get_login_html(&self) -> String {
+        self.api_client
+            .get(format!("{}/login", &self.address))
+            .send()
+            .await
+            .expect("Failed to execute request.")
+            .text()
+            .await
+            .expect("Failed to get response text.")
+    }
     pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
-        let client = reqwest::Client::new();
-        client
+        self.api_client
             .post(format!("{}/subscriptions", &self.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body)
@@ -48,8 +70,7 @@ impl TestApp {
     pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
         let username = &self.test_user.username;
         let password = &self.test_user.password;
-        let client = reqwest::Client::new();
-        client
+        self.api_client
             .post(format!("{}/newsletters", &self.address))
             .basic_auth(username, Some(password))
             .json(&body)
@@ -106,6 +127,12 @@ pub async fn spawn_app() -> TestApp {
     let test_user = TestUser::generate();
     test_user.store(&db_pool).await;
 
+    let api_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
     tokio::spawn(application.run_until_stopped());
     TestApp {
         address,
@@ -113,6 +140,7 @@ pub async fn spawn_app() -> TestApp {
         db_pool,
         email_server,
         test_user,
+        api_client,
     }
 }
 
@@ -170,4 +198,9 @@ impl TestUser {
         .await
         .expect("Failed to store test user.");
     }
+}
+
+pub fn assert_is_redirect_to(response: &reqwest::Response, location: &str) {
+    assert_eq!(response.status().as_u16(), 303);
+    assert_eq!(response.headers().get("location").unwrap(), location);
 }
