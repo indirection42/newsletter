@@ -1,8 +1,10 @@
 use crate::config::{DatabaseSettings, Settings};
 use crate::email_client::EmailClient;
 use crate::routes::{
-    confirm, health_check, home, login, login_form, publish_newsletter, subscribe,
+    admin_dashboard, confirm, health_check, home, login, login_form, publish_newsletter, subscribe,
 };
+use actix_session::storage::RedisSessionStore;
+use actix_session::SessionMiddleware;
 use actix_web::cookie::Key;
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -22,7 +24,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub async fn build(config: Settings) -> Result<Self, io::Error> {
+    pub async fn build(config: Settings) -> Result<Self, anyhow::Error> {
         let conn_pool = get_conn_pool(&config.database);
 
         let address = format!("{}:{}", config.application.host, config.application.port);
@@ -38,7 +40,9 @@ impl Application {
             email_client,
             config.application.base_url,
             config.application.hmac_secret,
-        )?;
+            config.redis_uri,
+        )
+        .await?;
         Ok(Application { server, port })
     }
 
@@ -62,24 +66,30 @@ pub fn get_conn_pool(config: &DatabaseSettings) -> PgPool {
 pub struct ApplicationBaseUrl(pub String);
 #[derive(Clone)]
 pub struct HmacSecret(pub Secret<String>);
-pub fn run(
+async fn run(
     listener: TcpListener,
     conn_pool: PgPool,
     email_client: EmailClient,
     confirm_base_url: String,
     hmac_secret: Secret<String>,
-) -> Result<Server, std::io::Error> {
+    redis_uri: Secret<String>,
+) -> Result<Server, anyhow::Error> {
     let email_client = web::Data::new(email_client);
     let conn_pool = web::Data::new(conn_pool);
     let base_url = web::Data::new(ApplicationBaseUrl(confirm_base_url));
-    let hmac_secret = web::Data::new(HmacSecret(hmac_secret));
-    let message_store =
-        CookieMessageStore::builder(Key::from(hmac_secret.0.expose_secret().as_bytes())).build();
+    let secret_key = Key::from(hmac_secret.expose_secret().as_bytes());
+    let message_store = CookieMessageStore::builder(secret_key.clone()).build();
     let message_framework = FlashMessagesFramework::builder(message_store).build();
+    let redis_store = RedisSessionStore::new(redis_uri.expose_secret()).await?;
+
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
             .wrap(message_framework.clone())
+            .wrap(SessionMiddleware::new(
+                redis_store.clone(),
+                secret_key.clone(),
+            ))
             .route("/", web::get().to(home))
             .route("/health_check", web::get().to(health_check))
             .route("/login", web::get().to(login_form))
@@ -87,10 +97,10 @@ pub fn run(
             .route("/subscriptions", web::post().to(subscribe))
             .route("/subscriptions/confirm", web::get().to(confirm))
             .route("/newsletters", web::post().to(publish_newsletter))
+            .route("/admin/dashboard", web::get().to(admin_dashboard))
             .app_data(conn_pool.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())
-            .app_data(hmac_secret.clone())
     })
     .listen(listener)?
     .run();
