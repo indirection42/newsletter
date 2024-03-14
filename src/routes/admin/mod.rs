@@ -1,2 +1,6 @@
 mod dashboard;
-pub use dashboard::admin_dashboard;
+mod logout;
+mod password;
+pub use dashboard::*;
+pub use logout::*;
+pub use password::*;
