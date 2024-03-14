@@ -1,17 +1,9 @@
-use crate::session_state::TypedSession;
-use crate::utils::e500;
-use actix_web::http::header::{ContentType, LOCATION};
+use actix_web::http::header::ContentType;
 use actix_web::HttpResponse;
 use actix_web_flash_messages::{IncomingFlashMessages, Level};
 pub async fn change_password_form(
-    session: TypedSession,
     flash_messages: IncomingFlashMessages,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if session.get_user_id().map_err(e500)?.is_none() {
-        return Ok(HttpResponse::SeeOther()
-            .insert_header((LOCATION, "/login"))
-            .finish());
-    };
     let mut error_html = String::new();
     for m in flash_messages.iter().filter(|m| m.level() == Level::Error) {
         error_html.push_str(&format!(r#"<p style="color: red;">{}</p>"#, m.content()));

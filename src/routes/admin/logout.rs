@@ -1,6 +1,5 @@
 use crate::session_state::TypedSession;
-use crate::utils::e500;
-use actix_web::http::header::LOCATION;
+use crate::utils::{e500, see_other};
 use actix_web::HttpResponse;
 use actix_web_flash_messages::FlashMessage;
 
@@ -9,7 +8,5 @@ pub async fn logout(session: TypedSession) -> Result<HttpResponse, actix_web::Er
         session.logout();
         FlashMessage::info("You have successfully logged out").send();
     }
-    Ok(HttpResponse::SeeOther()
-        .insert_header((LOCATION, "/login"))
-        .finish())
+    Ok(see_other("/login"))
 }
