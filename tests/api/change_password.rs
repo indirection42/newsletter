@@ -32,12 +32,7 @@ async fn new_password_fields_must_match() {
     let new_password = Uuid::new_v4().to_string();
     let another_new_password = Uuid::new_v4().to_string();
 
-    let login_body = serde_json::json!({
-        "username" : &app.test_user.username,
-        "password": &app.test_user.password
-    });
-
-    let response = app.post_login(&login_body).await;
+    let response = app.test_user.login(&app).await;
     assert_is_redirect_to(&response, "/admin/dashboard");
 
     let change_password_body = serde_json::json!({
@@ -59,12 +54,7 @@ async fn current_password_must_be_valid() {
     let new_password = Uuid::new_v4().to_string();
     let wrong_password = Uuid::new_v4().to_string();
 
-    let login_body = serde_json::json!({
-        "username" : &app.test_user.username,
-        "password": &app.test_user.password
-    });
-
-    let response = app.post_login(&login_body).await;
+    let response = app.test_user.login(&app).await;
     assert_is_redirect_to(&response, "/admin/dashboard");
 
     let change_password_body = serde_json::json!({
@@ -86,14 +76,7 @@ async fn new_password_must_be_long_enough() {
     let app = spawn_app().await;
     let new_password = "short".to_string();
 
-    let login_body = serde_json::json!(
-        {
-            "username": &app.test_user.username,
-            "password": &app.test_user.password
-        }
-    );
-
-    let response = app.post_login(&login_body).await;
+    let response = app.test_user.login(&app).await;
     assert_is_redirect_to(&response, "/admin/dashboard");
 
     let change_password_body = serde_json::json!({
@@ -115,14 +98,7 @@ async fn change_password_works() {
     let app = spawn_app().await;
     let new_password = Uuid::new_v4().to_string();
 
-    let login_body = serde_json::json!(
-        {
-            "username": &app.test_user.username,
-            "password": &app.test_user.password
-        }
-    );
-
-    let response = app.post_login(&login_body).await;
+    let response = app.test_user.login(&app).await;
     assert_is_redirect_to(&response, "/admin/dashboard");
 
     let change_password_body = serde_json::json!({

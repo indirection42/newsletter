@@ -1,5 +1,4 @@
-use std::vec;
-
+use crate::helpers::assert_is_redirect_to;
 use crate::helpers::spawn_app;
 use crate::helpers::ConfirmationLinks;
 use crate::helpers::TestApp;
@@ -10,48 +9,42 @@ use wiremock::{Mock, ResponseTemplate};
 async fn requests_missing_authorization_are_rejected() {
     let app = spawn_app().await;
 
-    let newsletter_request_body = serde_json::json!({
+    let request_body = serde_json::json!({
         "title": "Newsletter title",
-        "content": {
-            "text" : "Newsletter body as plain text",
-            "html" : "<p>Newsletter body as HTML</p>"
-        }
+        "text_content" : "Newsletter body as plain text",
+        "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
-    let response = reqwest::Client::new()
-        .post(format!("{}/newsletters", &app.address))
-        .json(&newsletter_request_body)
-        .send()
-        .await
-        .expect("Failed to execute request.");
+    let response = app.post_newsletters(request_body).await;
 
-    assert_eq!(response.status().as_u16(), 401);
-    assert_eq!(
-        r#"Basic realm="publish""#,
-        response.headers()["WWW-Authenticate"]
-    );
+    assert_is_redirect_to(&response, "/login");
 }
 #[tokio::test]
 async fn newsletter_returns_400_for_invalid_data() {
     let app = spawn_app().await;
+
+    app.test_user.login(&app).await;
 
     let test_cases = vec![
         (serde_json::json!({}), "missing content and title"),
         (serde_json::json!({"title": "a title"}), "missing content"),
         (
             serde_json::json!(
-                {
-                    "content": { "text": "plain text", "html": "<p>Newsletter body as HTML</p>" }
-                }
-            ),
+                    {
+            "text_content" : "Newsletter body as plain text",
+            "html_content" : "<p>Newsletter body as HTML</p>"
+                    }
+                ),
             "missing title",
         ),
         (
-            serde_json::json!({"title": "a title", "content": { "html": "<p>Newsletter body as HTML</p>" }}),
+            serde_json::json!({"title": "a title",
+                    "html_content" : "<p>Newsletter body as HTML</p>"
+            }),
             "missing text",
         ),
         (
-            serde_json::json!({"title": "a title", "content": { "text": "plain text" }}),
+            serde_json::json!({"title": "a title",  "text_content": "plain text" }),
             "missing html",
         ),
     ];
@@ -72,6 +65,8 @@ async fn newsletter_are_not_delivered_to_unconfirmed_subscriber() {
 
     create_unconfirmed_subscriber(&app).await;
 
+    app.test_user.login(&app).await;
+
     Mock::given(path("/email"))
         .and(method("POST"))
         .respond_with(ResponseTemplate::new(200))
@@ -82,10 +77,8 @@ async fn newsletter_are_not_delivered_to_unconfirmed_subscriber() {
 
     let newsletter_request_body = serde_json::json!({
         "title": "Newsletter title",
-        "content": {
-            "text" : "Newsletter body as plain text",
-            "html" : "<p>Newsletter body as HTML</p>"
-        }
+        "text_content" : "Newsletter body as plain text",
+        "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
     let response = app.post_newsletters(newsletter_request_body).await;
@@ -99,6 +92,8 @@ async fn newsletters_are_delivered_to_confirmed_subscriber() {
 
     create_confirmed_subscriber(&app).await;
 
+    app.test_user.login(&app).await;
+
     Mock::given(path("/email"))
         .and(method("POST"))
         .respond_with(ResponseTemplate::new(200))
@@ -109,10 +104,8 @@ async fn newsletters_are_delivered_to_confirmed_subscriber() {
 
     let newsletter_request_body = serde_json::json!({
         "title": "Newsletter title",
-        "content": {
-            "text" : "Newsletter body as plain text",
-            "html" : "<p>Newsletter body as HTML</p>"
-        }
+        "text_content" : "Newsletter body as plain text",
+        "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
     let response = app.post_newsletters(newsletter_request_body).await;

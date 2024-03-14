@@ -1,30 +1,20 @@
-use crate::authentication::{validate_credentials, AuthError, Credentials};
+use crate::authentication::UserId;
 use crate::{domain::SubscriberEmail, email_client::EmailClient};
 use actix_web::{
-    http::{
-        self,
-        header::{HeaderMap, HeaderValue},
-    },
-    web, HttpRequest, HttpResponse, ResponseError,
+    http::{self, header::HeaderValue},
+    web, HttpResponse, ResponseError,
 };
 use anyhow::Context;
-use base64::prelude::*;
 use reqwest::header;
-use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
 use tracing::warn;
 
 #[derive(Deserialize)]
-pub struct BodyData {
+pub struct FormData {
     title: String,
-    content: Content,
-}
-
-#[derive(Deserialize)]
-pub struct Content {
-    text: String,
-    html: String,
+    html_content: String,
+    text_content: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,22 +43,13 @@ impl ResponseError for PublishError {
     }
 }
 
-#[tracing::instrument(name = "Publishing a newsletter.", skip(pool, email_client, body,request), fields(username = tracing::field::Empty, user_id = tracing::field::Empty))]
+#[tracing::instrument(name = "Publishing a newsletter.", skip(pool, email_client, form, user_id), fields(user_id = %*user_id))]
 pub async fn publish_newsletter(
     pool: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
-    body: web::Json<BodyData>,
-    request: HttpRequest,
+    form: web::Form<FormData>,
+    user_id: web::ReqData<UserId>,
 ) -> Result<HttpResponse, PublishError> {
-    let credentials = basic_authentication(request.headers()).map_err(PublishError::AuthError)?;
-
-    let _user_id = validate_credentials(credentials, &pool)
-        .await
-        .map_err(|e| match e {
-            AuthError::InvalidCredentials(_) => PublishError::AuthError(e.into()),
-            AuthError::UnexpectedError(_) => PublishError::UnexpectedError(e.into()),
-        })?;
-
     let subscribers = get_confirmed_subscribers(&pool)
         .await
         .context("Failed to get confirmed subscribers")?;
@@ -77,9 +58,9 @@ pub async fn publish_newsletter(
         email_client
             .send_email(
                 &subscriber.email,
-                &body.title,
-                &body.content.html,
-                &body.content.text,
+                &form.title,
+                &form.html_content,
+                &form.text_content,
             )
             .await
             .with_context(|| {
@@ -88,38 +69,6 @@ pub async fn publish_newsletter(
     }
 
     Ok(HttpResponse::Ok().finish())
-}
-
-fn basic_authentication(headers: &HeaderMap) -> Result<Credentials, anyhow::Error> {
-    let header_value = headers
-        .get("Authorization")
-        .context("The 'Authorization' header is missing.")?
-        .to_str()
-        .context("The 'Authorization' header was not a valid string.")?;
-    let base64encoded_segment = header_value
-        .strip_prefix("Basic ")
-        .context("The authorization scheme was not 'Basic {BASE64_ENCODED}'. ")?;
-    let decoded_bytes = BASE64_STANDARD
-        .decode(base64encoded_segment.as_bytes())
-        .context("Failed to base64-decode 'Basic' credentials")?;
-    let decoded_credentials = String::from_utf8(decoded_bytes)
-        .context("The 'Basic' credentials were not valid UTF-8.")?;
-
-    let mut credentials = decoded_credentials.splitn(2, ':');
-
-    let username = credentials
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("The username was not present in the 'Basic' credentials."))?
-        .to_string();
-
-    let password = credentials
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("The password was not present in the 'Basic' credentials."))?
-        .to_string();
-    Ok(Credentials {
-        username,
-        password: Secret::new(password),
-    })
 }
 
 struct ConfirmedSubscriber {
