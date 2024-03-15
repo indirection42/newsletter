@@ -1,9 +1,11 @@
 use crate::authentication::UserId;
+use crate::utils::see_other;
 use crate::{domain::SubscriberEmail, email_client::EmailClient};
 use actix_web::{
     http::{self, header::HeaderValue},
     web, HttpResponse, ResponseError,
 };
+use actix_web_flash_messages::FlashMessage;
 use anyhow::Context;
 use reqwest::header;
 use serde::Deserialize;
@@ -67,8 +69,9 @@ pub async fn publish_newsletter(
                 format!("Failed to send newsletter issue to {:?}", subscriber.email)
             })?;
     }
+    FlashMessage::info("The newsletter issue has been sent to all confirmed subscribers.").send();
 
-    Ok(HttpResponse::Ok().finish())
+    Ok(see_other("/admin/newsletters"))
 }
 
 struct ConfirmedSubscriber {

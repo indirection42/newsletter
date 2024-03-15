@@ -1,11 +1,11 @@
 use actix_web::http::header::ContentType;
 use actix_web::HttpResponse;
-use actix_web_flash_messages::{IncomingFlashMessages, Level};
+use actix_web_flash_messages::IncomingFlashMessages;
 pub async fn publish_newsletter_form(
     flash_messages: IncomingFlashMessages,
 ) -> Result<HttpResponse, actix_web::Error> {
     let mut error_html = String::new();
-    for m in flash_messages.iter().filter(|m| m.level() == Level::Error) {
+    for m in flash_messages.iter() {
         error_html.push_str(&format!(r#"<p style="color: red;">{}</p>"#, m.content()));
     }
     Ok(HttpResponse::Ok()
