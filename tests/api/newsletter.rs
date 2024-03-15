@@ -4,7 +4,6 @@ use crate::helpers::ConfirmationLinks;
 use crate::helpers::TestApp;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
-
 #[tokio::test]
 async fn requests_missing_authorization_are_rejected() {
     let app = spawn_app().await;
@@ -15,7 +14,7 @@ async fn requests_missing_authorization_are_rejected() {
         "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
-    let response = app.post_newsletters(request_body).await;
+    let response = app.post_newsletters(&request_body).await;
 
     assert_is_redirect_to(&response, "/login");
 }
@@ -50,7 +49,7 @@ async fn newsletter_returns_400_for_invalid_data() {
     ];
 
     for (invalid_body, error_message) in test_cases {
-        let response = app.post_newsletters(invalid_body).await;
+        let response = app.post_newsletters(&invalid_body).await;
         assert_eq!(
             response.status().as_u16(),
             400,
@@ -81,7 +80,7 @@ async fn newsletter_are_not_delivered_to_unconfirmed_subscriber() {
         "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
-    let response = app.post_newsletters(newsletter_request_body).await;
+    let response = app.post_newsletters(&newsletter_request_body).await;
 
     assert_is_redirect_to(&response, "/admin/newsletters")
 }
@@ -108,9 +107,11 @@ async fn newsletters_are_delivered_to_confirmed_subscriber() {
         "html_content" : "<p>Newsletter body as HTML</p>"
     });
 
-    let response = app.post_newsletters(newsletter_request_body).await;
+    let response = app.post_newsletters(&newsletter_request_body).await;
+    assert_is_redirect_to(&response, "/admin/newsletters");
 
-    assert_is_redirect_to(&response, "/admin/newsletters")
+    let html_page = app.get_newsletters_html().await;
+    assert!(html_page.contains("The newsletter issue has been published!"));
 }
 
 async fn create_unconfirmed_subscriber(app: &TestApp) -> ConfirmationLinks {

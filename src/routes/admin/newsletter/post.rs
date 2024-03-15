@@ -69,7 +69,7 @@ pub async fn publish_newsletter(
                 format!("Failed to send newsletter issue to {:?}", subscriber.email)
             })?;
     }
-    FlashMessage::info("The newsletter issue has been sent to all confirmed subscribers.").send();
+    FlashMessage::info("The newsletter issue has been published!").send();
 
     Ok(see_other("/admin/newsletters"))
 }
