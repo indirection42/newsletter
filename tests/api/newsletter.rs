@@ -2,8 +2,40 @@ use crate::helpers::assert_is_redirect_to;
 use crate::helpers::spawn_app;
 use crate::helpers::ConfirmationLinks;
 use crate::helpers::TestApp;
+use std::time::Duration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
+
+#[tokio::test]
+async fn concurrent_form_submission_is_handled_gracefully() {
+    let app = spawn_app().await;
+    create_confirmed_subscriber(&app).await;
+    app.test_user.login(&app).await;
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+        // For idempotency, we expect only one email request to be fired
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "text_content" : "Newsletter body as plain text",
+        "html_content" : "<p>Newsletter body as HTML</p>",
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
+    });
+    let response1 = app.post_newsletters(&request_body);
+    let response2 = app.post_newsletters(&request_body);
+    let (response1, response2) = tokio::join!(response1, response2);
+
+    assert_eq!(response1.status(), response2.status());
+    assert_eq!(
+        response1.text().await.unwrap(),
+        response2.text().await.unwrap()
+    );
+}
 #[tokio::test]
 async fn newsletters_creation_is_idempotent() {
     let app = spawn_app().await;
