@@ -5,13 +5,46 @@ use crate::helpers::TestApp;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 #[tokio::test]
+async fn newsletters_creation_is_idempotent() {
+    let app = spawn_app().await;
+    create_confirmed_subscriber(&app).await;
+    app.test_user.login(&app).await;
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        // For idempotency, we expect only one email request to be fired
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    let request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "text_content" : "Newsletter body as plain text",
+        "html_content" : "<p>Newsletter body as HTML</p>",
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
+    });
+    let response = app.post_newsletters(&request_body).await;
+    assert_is_redirect_to(&response, "/admin/newsletters");
+
+    let html_page = app.get_newsletters_html().await;
+    assert!(html_page.contains("The newsletter issue has been published!"));
+
+    let response = app.post_newsletters(&request_body).await;
+    assert_is_redirect_to(&response, "/admin/newsletters");
+
+    let html_page = app.get_newsletters_html().await;
+    assert!(html_page.contains("The newsletter issue has been published!"));
+}
+#[tokio::test]
 async fn requests_missing_authorization_are_rejected() {
     let app = spawn_app().await;
 
     let request_body = serde_json::json!({
         "title": "Newsletter title",
         "text_content" : "Newsletter body as plain text",
-        "html_content" : "<p>Newsletter body as HTML</p>"
+        "html_content" : "<p>Newsletter body as HTML</p>",
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
 
     let response = app.post_newsletters(&request_body).await;
@@ -26,24 +59,29 @@ async fn newsletter_returns_400_for_invalid_data() {
 
     let test_cases = vec![
         (serde_json::json!({}), "missing content and title"),
-        (serde_json::json!({"title": "a title"}), "missing content"),
         (
-            serde_json::json!(
-                    {
-            "text_content" : "Newsletter body as plain text",
-            "html_content" : "<p>Newsletter body as HTML</p>"
-                    }
-                ),
+            serde_json::json!({"title": "a title",        "idempotency_key": uuid::Uuid::new_v4().to_string()}),
+            "missing content",
+        ),
+        (
+            serde_json::json!({
+                "text_content" : "Newsletter body as plain text",
+                "html_content" : "<p>Newsletter body as HTML</p>",
+                "idempotency_key": uuid::Uuid::new_v4().to_string()
+                }
+            ),
             "missing title",
         ),
         (
-            serde_json::json!({"title": "a title",
-                    "html_content" : "<p>Newsletter body as HTML</p>"
-            }),
+            serde_json::json!(
+                {"title": "a title",
+                        "html_content" : "<p>Newsletter body as HTML</p>",
+            "idempotency_key": uuid::Uuid::new_v4().to_string()
+                }),
             "missing text",
         ),
         (
-            serde_json::json!({"title": "a title",  "text_content": "plain text" }),
+            serde_json::json!({"title": "a title",  "text_content": "plain text",        "idempotency_key": uuid::Uuid::new_v4().to_string() }),
             "missing html",
         ),
     ];
@@ -77,7 +115,8 @@ async fn newsletter_are_not_delivered_to_unconfirmed_subscriber() {
     let newsletter_request_body = serde_json::json!({
         "title": "Newsletter title",
         "text_content" : "Newsletter body as plain text",
-        "html_content" : "<p>Newsletter body as HTML</p>"
+        "html_content" : "<p>Newsletter body as HTML</p>",
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
 
     let response = app.post_newsletters(&newsletter_request_body).await;
@@ -104,7 +143,8 @@ async fn newsletters_are_delivered_to_confirmed_subscriber() {
     let newsletter_request_body = serde_json::json!({
         "title": "Newsletter title",
         "text_content" : "Newsletter body as plain text",
-        "html_content" : "<p>Newsletter body as HTML</p>"
+        "html_content" : "<p>Newsletter body as HTML</p>",
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
 
     let response = app.post_newsletters(&newsletter_request_body).await;

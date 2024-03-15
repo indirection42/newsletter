@@ -1,6 +1,7 @@
 use actix_web::http::header::ContentType;
 use actix_web::HttpResponse;
 use actix_web_flash_messages::IncomingFlashMessages;
+
 pub async fn publish_newsletter_form(
     flash_messages: IncomingFlashMessages,
 ) -> Result<HttpResponse, actix_web::Error> {
@@ -8,6 +9,7 @@ pub async fn publish_newsletter_form(
     for m in flash_messages.iter() {
         error_html.push_str(&format!(r#"<p style="color: red;">{}</p>"#, m.content()));
     }
+    let idempotency_key = uuid::Uuid::new_v4();
     Ok(HttpResponse::Ok()
         .content_type(ContentType::html())
         .body(format!(
@@ -45,6 +47,7 @@ pub async fn publish_newsletter_form(
                 cols="50"
             ></textarea>
         </label>
+        <input hidden type="text" name="idempotency_key" value="{idempotency_key}">
         <button type="submit">Send</button>
     </form>
     <p><a href="/admin/dashboard">&lt;- Back</a></p>
