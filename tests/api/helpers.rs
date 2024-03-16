@@ -8,9 +8,13 @@ use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::io;
 use uuid::Uuid;
 use wiremock::MockServer;
-use zero2prod::config::{get_config, DatabaseSettings};
+use zero2prod::issue_delivery_worker::{try_execute_task, ExecutionOutcome};
 use zero2prod::startup::{get_conn_pool, Application};
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
+use zero2prod::{
+    config::{get_config, DatabaseSettings},
+    email_client::EmailClient,
+};
 static TRACING: Lazy<()> = Lazy::new(|| {
     if std::env::var("TEST_LOG").is_ok() {
         let subscriber = get_subscriber("test".into(), "debug".into(), io::stdout);
@@ -28,6 +32,7 @@ pub struct TestApp {
     pub email_server: MockServer,
     pub test_user: TestUser,
     pub api_client: reqwest::Client,
+    pub email_client: EmailClient,
 }
 
 pub struct ConfirmationLinks {
@@ -36,6 +41,17 @@ pub struct ConfirmationLinks {
 }
 
 impl TestApp {
+    pub async fn dispatch_all_pending_emails(&self) {
+        loop {
+            if let ExecutionOutcome::EmptyQueue =
+                try_execute_task(&self.db_pool, &self.email_client)
+                    .await
+                    .expect("Failed to execute task.")
+            {
+                break;
+            }
+        }
+    }
     pub async fn post_login<Body>(&self, body: &Body) -> reqwest::Response
     where
         Body: Serialize,
@@ -196,6 +212,8 @@ pub async fn spawn_app() -> TestApp {
         .build()
         .unwrap();
 
+    let email_client = config.email_client.client();
+
     tokio::spawn(application.run_until_stopped());
     TestApp {
         address,
@@ -204,6 +222,7 @@ pub async fn spawn_app() -> TestApp {
         email_server,
         test_user,
         api_client,
+        email_client,
     }
 }
 
