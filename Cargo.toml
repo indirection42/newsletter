@@ -57,3 +57,6 @@ wiremock = "0.6"
 serde_json = "1"
 linkify = "0.10"
 serde_urlencoded = "0.7"
+
+[patch.crates-io]
+config = { git = "https://github.com/mehcode/config-rs.git" }
